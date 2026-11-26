@@ -223,7 +223,6 @@ function NewSessionRecentProjects(props: { project: PromptProjectController }) {
             >
               <button
                 type="button"
-                data-action="prompt-recent-project"
                 class={`${TRIGGER} min-w-0`}
                 onClick={() => props.project.select(project)}
               >
