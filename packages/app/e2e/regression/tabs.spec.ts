@@ -3124,6 +3124,65 @@ async function mockGaveUpPermission(page: Page, tabLayout: "horizontal" | "inbox
   }
 }
 
+test("project tab groups are titled by their underlined, uppercase project name instead of a pill", async ({
+  page,
+}) => {
+  const dirA = "C:/OpenCode/ProjectTitlesA"
+  const dirB = "/srv/project-titles-b"
+  const local = session({ id: "ses_pt_local", directory: dirA, title: "Local alpha" })
+  const remote = session({ id: "ses_pt_remote", directory: dirB, title: "Remote gamma" })
+
+  await mockServers(page, {
+    [SERVER]: {
+      hostname: "local",
+      directory: dirA,
+      project: project({ id: "proj_pt_a", directory: dirA, name: "opencode" }),
+      provider: NO_PROVIDER,
+      sessions: [local],
+      pageMessages: () => ({ items: [] }),
+      strictDirectory: true,
+    },
+    [REMOTE_SERVER]: {
+      hostname: "blade",
+      directory: dirB,
+      project: project({ id: "proj_pt_b", directory: dirB, name: "blade-repo" }),
+      provider: NO_PROVIDER,
+      sessions: [remote],
+      pageMessages: () => ({ items: [] }),
+      strictDirectory: true,
+    },
+  })
+
+  await seed(page, {
+    servers: [{ url: REMOTE_SERVER, name: "blade" }],
+    tabs: [local.id, { session: remote.id, server: REMOTE_SERVER }],
+    settings: {
+      appearance: { tabLayout: "vertical", sidebarOpen: true },
+      general: { tabGroups: true, sidebarOrganize: "list" },
+    },
+  })
+
+  await page.goto(sessionHref(local.id))
+  const sidebar = page.locator('[data-slot="vertical-tabs-sidebar"]')
+  const header = (key: string) => sidebar.locator(`[data-tab-group-header][data-group-key="${key}"]`)
+
+  // Server groups keep their pill.
+  await expect(header(`server:${SERVER}`).locator("[data-tab-group-chip]")).toHaveText("local")
+
+  await sidebar.locator('[data-action="tab-groups-menu"]').click()
+  await page.getByRole("menuitemradio", { name: "Project", exact: true }).click()
+
+  for (const [key, name] of [
+    ["project:proj_pt_a", "opencode"],
+    ["project:proj_pt_b", "blade-repo"],
+  ]) {
+    const title = header(key).getByText(name, { exact: true })
+    await expect(title).toHaveCSS("text-transform", "uppercase")
+    await expect(title).toHaveCSS("text-decoration-line", "underline")
+    await expect(header(key).locator("[data-tab-group-chip]")).toHaveCount(0)
+  }
+})
+
 test("tab groups reorder without color drift, collapse and auto-expand on navigation, and combine by dwelling into manual groups", async ({
   page,
 }) => {
