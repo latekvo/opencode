@@ -1455,6 +1455,37 @@ test("the location dialog separates added projects from server projects and tags
   await expect.poll(() => files.length).toBeGreaterThan(0)
 })
 
+test("a recent project switches the draft in one click and keeps the prompt", async ({ page }) => {
+  const entry = (id: string, directory: string, active: number) =>
+    project({ id, directory, time: { created: T0, updated: T0, active: T0 + active } })
+
+  const own = entry("proj_recentprojects", "C:/OpenCode/RecentProjects", 1)
+  const api = entry("proj_api", "C:/OpenCode/api", 3)
+  const web = entry("proj_web", "C:/OpenCode/web", 2)
+
+  const view = await openDraft(page, {
+    name: "RecentProjects",
+    project: { time: own.time },
+    // The most active project is not used from this client, so it stays in the dialog's other projects.
+    projects: () => [own, api, web, entry("proj_unused", "C:/OpenCode/unused", 9)],
+    seed: { usedProjects: { local: [own.id, api.id, web.id] } },
+  })
+
+  const recent = page.getByRole("group", { name: "Recent projects", exact: true }).getByRole("button")
+  const path = page.locator('[data-slot="new-session-location-path"]')
+
+  // Each trigger's text starts with its avatar's fallback letter.
+  await expect(newSessionLocation(page)).toHaveText(/^.RecentProjects$/)
+  await expect(recent).toHaveText([/^.api$/, /^.web$/])
+  await view.editor.fill("Keep this prompt")
+  await recent.filter({ hasText: "web" }).click()
+  await expect(newSessionLocation(page)).toHaveText(/^.web$/)
+  await expect(path).toHaveText(web.worktree)
+  await expect(recent).toHaveText([/^.api$/, /^.RecentProjects$/])
+  await expect(view.editor).toBeFocused()
+  await expect(view.editor).toHaveText("Keep this prompt")
+})
+
 for (const binding of ["mod+alt+p", "none"]) {
   test(`the location dialog honors the Open project shortcut override: ${binding}`, async ({ page }) => {
     await openDraft(page, {

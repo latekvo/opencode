@@ -98,4 +98,41 @@ describe("new session project selection", () => {
       dispose()
     })
   })
+
+  test("offers at most five other used projects, keeping the selected directory on another server", () => {
+    const local = { key: "sidecar", name: "hailmary", kind: "current" as const }
+    const apollo = { key: "http://apollo:4096", name: "apollo", kind: "remote" as const }
+    const entry = (id: string, server: typeof local | typeof apollo, active: number, used = true) => ({
+      id,
+      worktree: `/${id}`,
+      server,
+      used,
+      time: { active },
+    })
+
+    const controls: PromptProjectControls = {
+      available: [
+        entry("opencode", local, 9),
+        entry("opencode", apollo, 8),
+        entry("unused", local, 7, false),
+        ...[6, 5, 4, 3, 2].map((active) => entry(`p${active}`, local, active)),
+      ],
+      directory: "/opencode",
+      server: "sidecar",
+      select() {},
+      add() {},
+    }
+
+    createRoot((dispose) => {
+      const controller = createPromptProjectController({ controls: () => controls })
+      expect(controller.recent().map((project) => `${project.server?.name}:${project.id}`)).toEqual([
+        "apollo:opencode",
+        "hailmary:p6",
+        "hailmary:p5",
+        "hailmary:p4",
+        "hailmary:p3",
+      ])
+      dispose()
+    })
+  })
 })
