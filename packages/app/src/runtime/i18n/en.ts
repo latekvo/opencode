@@ -739,6 +739,7 @@ export const dict = {
   "session.new.project.add": "Add project",
   "project.start.reconnect": "Reconnect",
   "session.new.project.trigger.tooltip": "Choose project",
+  "session.new.project.recent": "Recent projects",
   "session.new.worktree.creating": "Creating worktree",
   "session.new.starting": "Starting session",
   "session.new.timedOut": "The server took too long to respond. Send again to retry.",

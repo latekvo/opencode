@@ -40,6 +40,8 @@ export type PromptProjectControls = {
   add: (title: string, server?: string) => void
 }
 
+const RECENT_PROJECTS = 5
+
 export function createPromptProjectController(input: { controls: Accessor<PromptProjectControls> }) {
   const language = useLanguage()
 
@@ -70,8 +72,16 @@ export function createPromptProjectController(input: { controls: Accessor<Prompt
   const matches = (project: PromptProject, other?: PromptProject) =>
     !!other && pathKey(other.worktree) === pathKey(project.worktree) && other.server?.key === project.server?.key
 
+  const recent = createMemo(() =>
+    projects()
+      .filter((project) => project.used && !matches(project, selected()))
+      .slice(0, RECENT_PROJECTS),
+  )
+
   return {
     selected,
+    /** The used projects to switch to in one click, most recent first. */
+    recent,
     isSelected: (project: PromptProject) => matches(project, selected()),
     empty: () => input.controls().available.length === 0,
     projects,

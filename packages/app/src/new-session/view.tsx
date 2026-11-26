@@ -2,7 +2,7 @@ import { Tooltip } from "@opencode/ui/tooltip"
 import { Icon } from "@opencode/ui/icon"
 import { Keybind } from "@opencode/ui/keybind"
 import { useCommand } from "@/shell/commands/command"
-import { Match, Show, Switch, createComputed, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { For, Match, Show, Switch, createComputed, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import {
@@ -126,6 +126,7 @@ export function NewSessionView(props: {
                     />
                   )}
                 </Show>
+                <NewSessionRecentProjects project={props.project} />
               </div>
               <Show when={props.project.empty()}>
                 <PromptProjectAddButton controller={props.project} />
@@ -193,6 +194,55 @@ function fitPath(value: string, width: number, font: string) {
 
 const TRIGGER =
   "flex h-7 items-center gap-1.5 rounded-[4px] text-start ps-1.5 pe-2 text-v2-text-text-muted transition-[background-color,color] hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base"
+
+function NewSessionRecentProjects(props: { project: PromptProjectController }) {
+  const language = useLanguage()
+
+  return (
+    <Show when={props.project.recent().length}>
+      <div
+        role="group"
+        aria-label={language.t("session.new.project.recent")}
+        class="flex min-w-0 flex-wrap items-center gap-1 ps-2 pe-1.5 text-[13px] font-[440] leading-[var(--line-height-compact)] tracking-[-0.04px]"
+      >
+        <For each={props.project.recent()}>
+          {(project) => (
+            <Tooltip
+              placement="bottom"
+              openDelay={800}
+              value={
+                <span class="flex flex-col">
+                  <Show when={project.server?.kind !== "current" && project.server}>
+                    {(server) => <span>{server().name}</span>}
+                  </Show>
+                  <span dir="ltr">{project.worktree}</span>
+                </span>
+              }
+              class="flex min-w-0 max-w-[200px]"
+              contentClass="max-w-[calc(100vw-32px)] break-all"
+            >
+              <button
+                type="button"
+                data-action="prompt-recent-project"
+                class={`${TRIGGER} min-w-0`}
+                onClick={() => props.project.select(project)}
+              >
+                <ProjectAvatar
+                  class="shrink-0"
+                  fallback={displayName(project)}
+                  src={getProjectAvatarSource(project.id, project.icon)}
+                  variant={getProjectAvatarVariant(project.icon?.color)}
+                  generated={getProjectAvatarGenerated(project)}
+                />
+                <span class="min-w-0 truncate">{displayName(project)}</span>
+              </button>
+            </Tooltip>
+          )}
+        </For>
+      </div>
+    </Show>
+  )
+}
 
 function NewSessionLocation(props: {
   project: PromptProject
