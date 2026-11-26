@@ -1008,11 +1008,23 @@ export function TabGroupHeader(props: { group: ComputedTabGroup }) {
         onClick={() => tabGroups.toggleCollapsed(props.group.key)}
         class="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-[6px] text-start focus-visible:-outline-offset-2"
       >
-        <span data-tab-group-chip data-group-color={props.group.color} class="max-w-full min-w-0">
-          <span class="min-w-0 truncate" dir="auto">
+        <Show
+          when={props.group.kind === "project"}
+          fallback={
+            <span data-tab-group-chip data-group-color={props.group.color} class="max-w-full min-w-0">
+              <span class="min-w-0 truncate" dir="auto">
+                {props.group.name}
+              </span>
+            </span>
+          }
+        >
+          <span
+            class="min-w-0 truncate ps-2 text-[12px] font-medium uppercase leading-[var(--line-height-compact)] text-v2-text-text-muted underline underline-offset-[3px]"
+            dir="auto"
+          >
             {props.group.name}
           </span>
-        </span>
+        </Show>
         <Show when={props.group.collapsed && count() > 0}>
           <span class="shrink-0 text-[11px] leading-[var(--line-height-compact)] text-v2-text-text-faint">
             {count()}
