@@ -85,6 +85,32 @@ test("the new session screen does not show session details", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Session details", exact: true })).toHaveCount(0)
 })
 
+test("a long prompt lifts the new session's content instead of pushing it past the provider tip", async ({ page }) => {
+  const view = await openDraft(page, { name: "TallPrompt" })
+  const composer = page.locator('[data-component="composer"]')
+  const tip = page.locator('[data-component="new-session-tip"]')
+  const rest = (await composer.boundingBox())!
+
+  await view.editor.fill(Array.from({ length: 40 }, (_, index) => `Line ${index + 1}`).join("\n"))
+  await expect.poll(() => view.editor.innerText()).toMatch(/\nLine 40$/)
+  await expect
+    .poll(() =>
+      page
+        .locator('[data-component="composer-scroll"]')
+        .evaluate((element) => element.getBoundingClientRect().height === window.innerHeight / 2),
+    )
+    .toBe(true)
+
+  await expect(tip).toBeVisible()
+  const [grown, location, tipBox] = await Promise.all([
+    composer.boundingBox(),
+    newSessionLocation(page).boundingBox(),
+    tip.boundingBox(),
+  ])
+  expect(grown!.y).toBeLessThan(rest.y)
+  expect(location!.y + location!.height).toBeLessThanOrEqual(tipBox!.y)
+})
+
 test("the location shortcuts choose worktrees from every state and keep cycling", async ({ page }) => {
   const existing = "C:/OpenCode/LocationShortcut/.worktrees/quiet-river"
 
