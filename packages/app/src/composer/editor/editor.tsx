@@ -1757,7 +1757,10 @@ function ComposerSuggestionIcon(props: { item: ComposerSuggestion }) {
 
   return (
     <FileIcon
-      node={{ path: props.item.path ?? props.item.label, type: props.item.kind === "reference" ? "directory" : "file" }}
+      node={{
+        path: props.item.path ?? props.item.label,
+        type: props.item.kind === "reference" || props.item.path?.endsWith("/") ? "directory" : "file",
+      }}
       class="size-4 shrink-0"
     />
   )

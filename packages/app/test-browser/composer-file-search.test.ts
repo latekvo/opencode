@@ -88,6 +88,30 @@ test("closing @ aborts its session search, and reopening on the same word waits 
   }
 })
 
+test("a path lists only its files and folders, and searches no sessions", async () => {
+  const words: string[] = []
+
+  const value = setup(
+    { "~/d": ["/home/u/dev/"] },
+    {
+      searchSessions: () => [{ id: "session:ses_notes", kind: "session", label: "~/dev notes" }],
+      requestSessionSearch: (word) => {
+        words.push(word)
+
+        return Promise.resolve()
+      },
+    },
+  )
+
+  try {
+    await value.type("@~/d")
+    expect(value.editor.suggestions().map((item) => item.id)).toEqual(["file:/home/u/dev/"])
+    expect(words).toEqual([])
+  } finally {
+    value.dispose()
+  }
+})
+
 test("moving the @ highlight reuses the current query results", async () => {
   const searches: string[] = []
 

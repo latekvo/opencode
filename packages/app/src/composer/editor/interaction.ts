@@ -19,6 +19,7 @@ import type {
 import {
   composerPopoverActiveID,
   createComposerInteractionState,
+  isComposerPathQuery,
   isComposerPopoverOpen,
   selectComposerMode,
   transitionComposer,
@@ -288,10 +289,12 @@ export function createComposerEditor(input: {
     void Promise.try(() => input.requestSessionSearch?.(effect.word, controller.signal)).then(settled, settled)
   }
 
+  const hasSessions = (query: string) => !!input.requestSessionSearch && !isComposerPathQuery(query)
+
   createEffect(() => {
     if (state.popover.type !== "context") return untrack(() => dispatchMentionSearch(MENTION_CONTEXT_CLOSED))
     const query = state.popover.query
-    untrack(() => dispatchMentionSearch({ type: "context.changed", query, hasSessions: !!input.requestSessionSearch }))
+    untrack(() => dispatchMentionSearch({ type: "context.changed", query, hasSessions: hasSessions(query) }))
   })
   onCleanup(() => dispatchMentionSearch({ type: "disposed" }))
 
@@ -301,6 +304,8 @@ export function createComposerEditor(input: {
   const contextList = useFilteredList<ComposerSuggestion>({
     items: (query) => {
       if (!contextOpen()) return []
+
+      if (isComposerPathQuery(query)) return [...fileRows()]
 
       const sessions = input.searchSessions?.(query) ?? []
 
@@ -366,6 +371,17 @@ export function createComposerEditor(input: {
 
   const selectable = () => suggestions().flatMap((item) => (stale(item) ? [] : [item.id]))
 
+  // The query's files, or the sessions its first word finds, have yet to arrive.
+  const contextLoading = () => {
+    if (state.popover.type !== "context") return false
+    const query = state.popover.query
+
+    return (
+      isMentionFileStale(mentionSearch(), query) ||
+      selectMentionSessionsPending(mentionSearch(), query, hasSessions(query))
+    )
+  }
+
   const suggestions = () => {
     if (state.popover.type !== "history") return list().flat()
     const query = state.popover.query.trim().toLowerCase()
@@ -416,8 +432,10 @@ export function createComposerEditor(input: {
       return
     }
 
-    if (command.type === "draft.removeTextBefore") {
-      draft.removeTextBefore(command.value)
+    if (command.type === "draft.replaceTextBefore") {
+      draft.replaceTextBefore(command.value, command.replacement)
+      // Rendering the new text leaves the caret at the end of the draft.
+      restoreFocus()
 
       return
     }
@@ -437,7 +455,7 @@ export function createComposerEditor(input: {
     if (command.type === "suggestion.select") {
       const item = suggestions().find((entry) => entry.id === command.id)
 
-      if (item) dispatch({ type: "popover.select", item })
+      if (item) dispatch({ type: "popover.select", item, complete: command.complete })
 
       return
     }
@@ -498,6 +516,7 @@ export function createComposerEditor(input: {
         empty:
           event.key === "Backspace" &&
           draft.state.prompt.every((part) => !("content" in part) || part.content.length === 0),
+        loading: event.key === "Enter" && contextLoading(),
       })
 
     if (handled) event.preventDefault()
@@ -718,7 +737,7 @@ export function createComposerEditor(input: {
       if (prompt) draft.setPrompt(prompt, cursor)
 
       if (input.view.draftOnly) return
-      dispatch({ type: "input.changed", value, persist: !prompt })
+      dispatch({ type: "input.changed", value, persist: !prompt, commands: input.commands() })
     },
     onCursor(cursor: number) {
       draft.setCursor(cursor)

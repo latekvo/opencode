@@ -15,6 +15,8 @@ import { usePluginHost } from "@/runtime/plugin/host"
 import { usePluginAttachment } from "@/runtime/plugin/host-apis"
 import { usePlatform } from "@/runtime/platform/platform"
 import { useWorkspaceLocation } from "@/workspaces/location"
+import { createDirectorySearch, displayInputDirectory, displayPickerPath } from "@/workspaces/selection/domain"
+import { inferHomeDirectory } from "@/runtime/server/global-sync/bootstrap"
 import { useData, useServer } from "@/runtime/server/current"
 import { useServerSDK } from "@/runtime/server/client"
 import { readLocalImage } from "@/runtime/server/image"
@@ -34,7 +36,7 @@ import type { PromptHistoryComment } from "./history/entry"
 import { createComposerHistory } from "./history/store"
 import { createComposerSubmit } from "./submit"
 import { composerSubmitView } from "./machine"
-import { isComposerPopoverOpen } from "./suggestions/machine"
+import { isComposerPathQuery, isComposerPopoverOpen } from "./suggestions/machine"
 import { useAttachmentDestination } from "./attachments/destination"
 import { parseClientSlashCommand } from "./client-slash-command"
 
@@ -87,6 +89,7 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
 
   const mode = () => prompt.mode.current()
   const history = createComposerHistory()
+  const home = () => server.ctx.sync.data.path.home || inferHomeDirectory(sdk().directory)
 
   const recent = createMemo(() => {
     const all = plugins.files.opened()
@@ -416,14 +419,35 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
         .slice(0, 5)
         .map((item) => item.suggestion)
     },
-    searchContextFiles: async (query, signal) =>
-      (await files.searchFilesAndDirectories(query, { signal })).map((path) => ({
+    searchContextFiles: async (query, signal) => {
+      const search = pathSearch()
+
+      // File search covers only the session's folder. Without a known home, `~` would list that folder too.
+      if (search && isComposerPathQuery(query))
+        return query.startsWith("~") && !home()
+          ? []
+          : (await search(query, { signal })).map((path) => {
+              const label = path.endsWith("/")
+                ? displayInputDirectory(path, home())
+                : displayPickerPath(path, "", home())
+
+              return {
+                id: `file:${path}`,
+                kind: "file",
+                label,
+                path,
+                mention: { type: "file", path, content: `@${label}`, start: 0, end: 0 },
+              }
+            })
+
+      return (await files.searchFilesAndDirectories(query, { signal })).map((path) => ({
         id: `file:${path}`,
         kind: "file",
         label: path,
         path,
         mention: { type: "file", path, content: `@${path}`, start: 0, end: 0 },
-      })),
+      }))
+    },
     onQuoteComment: (item, comment) => prompt.context.updateComment(item.commentID, { comment }),
     quoteComment: prompt.quoteComment,
     onContextRemove(item) {
@@ -600,6 +624,25 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
         onStop: () => void submission.stop(),
       },
     },
+  })
+
+  const contextOpen = createMemo(() => controller.state.popover.type === "context")
+
+  // Folder listings are kept while the list stays open, so the next one shows what changed since.
+  const pathSearch = createMemo(() => {
+    if (!contextOpen()) return
+
+    const search = createDirectorySearch({
+      sdk: serverSDK,
+      location: () => ({ directory: sdk().directory }),
+      base: () => sdk().directory,
+      home,
+      files: true,
+    })
+
+    onCleanup(search.dispose)
+
+    return search
   })
 
   Object.defineProperty(controller, "model", { get: () => adapter.controls().model })

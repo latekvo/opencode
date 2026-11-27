@@ -449,6 +449,48 @@ test("searches from an absolute root without a default base", async () => {
   expect(directories).toEqual(["/"])
 })
 
+test("a search that lists files ends folders in a slash and walks only folders", async () => {
+  const location = { directory: "/home/luke" }
+  const listed: string[] = []
+
+  const listings = new Map([
+    [
+      "/home/luke",
+      [
+        { path: "dev/", type: "directory" },
+        { path: "dev.md", type: "file" },
+      ],
+    ],
+    [
+      "/home/luke/dev",
+      [
+        { path: "dev/app/", type: "directory" },
+        { path: "dev/readme.md", type: "file" },
+      ],
+    ],
+  ])
+
+  const api = sdk({
+    list: async (input: { path: string }) => {
+      listed.push(input.path)
+
+      return { location, data: listings.get(input.path) ?? [] }
+    },
+  })
+
+  const search = createDirectorySearch({
+    sdk: api,
+    home: () => "/home/luke",
+    base: () => "/repo",
+    location: () => location,
+    files: true,
+  })
+
+  expect(await search("~/")).toEqual(["/home/luke/dev/", "/home/luke/dev.md"])
+  expect(await search("~/de/re")).toEqual(["/home/luke/dev/readme.md"])
+  expect(listed).toEqual(["/home/luke", "/home/luke/dev"])
+})
+
 test("limits background tasks and prioritizes newly requested work", async () => {
   const queue = createPriorityTaskQueue<void>(2)
   const first = Promise.withResolvers<void>()

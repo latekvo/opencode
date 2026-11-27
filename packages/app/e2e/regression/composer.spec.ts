@@ -159,6 +159,112 @@ test("a bare @ lists sessions, and a multi-word title matches while file search 
   expect(prompts[1]?.text).toBe("@home now")
 })
 
+test("completes paths from home and the root, with or without @, and sends them as absolute files", async ({
+  page,
+}) => {
+  const prompts: Parameters<NonNullable<MockServerConfig["onPrompt"]>>[0]["body"][] = []
+  const commands: unknown[] = []
+
+  const listings = new Map([
+    [
+      "/",
+      [
+        { path: "/Users/", type: "directory" },
+        { path: "/tmp/", type: "directory" },
+      ],
+    ],
+    ["/Users", [{ path: "/Users/tester/", type: "directory" }]],
+    [
+      "/Users/tester",
+      [
+        { path: "/Users/tester/dev/", type: "directory" },
+        { path: "/Users/tester/notes.md", type: "file" },
+        { path: "/Users/tester/project/", type: "directory" },
+      ],
+    ],
+    ["/Users/tester/dev", [{ path: "/Users/tester/dev/app.ts", type: "file" }]],
+  ])
+
+  const view = await openSession(page, {
+    name: "ComposerPaths",
+    // Home is inferred from the session's folder.
+    directory: "/Users/tester/project",
+    fileList: (path) => listings.get(path) ?? [],
+    findFiles: () => [],
+    commands: [{ name: "review", description: "Review changes" }],
+    onCommand: (input) => void commands.push(input.body),
+    onPrompt: (input) => void prompts.push(input.body),
+  })
+
+  const suggestions = page.locator('[data-component="composer-suggestions"]')
+  const rows = suggestions.locator("[data-suggestion-id] bdi")
+  // Rows of the previous query stay listed while the next search runs; only the current query's rows take the highlight.
+  const active = suggestions.locator("[data-suggestion-id][data-active] bdi")
+
+  await view.editor.pressSequentially("Read ~/")
+  await expect(rows).toHaveText(["~/dev/", "~/notes.md", "~/project/"])
+  await expect(active).toHaveText("~/dev/")
+  await view.editor.press("Tab")
+  await expect(view.editor).toHaveText("Read ~/dev/")
+  await expect(active).toHaveText("~/dev/app.ts")
+  await expect(rows).toHaveCount(1)
+  await view.editor.press("Enter")
+  await expect(view.editor.locator('[data-mention="file"]')).toHaveText("@~/dev/app.ts")
+
+  // Enter waits for the rows of a mention, so it neither sends nor picks before they arrive.
+  const root = await holdRoute(page, /\/api\/fs\/list\?(.*&)?path=%2F(&|$)/)
+  await view.editor.pressSequentially("and @/tm")
+  await root.arrived
+  await view.editor.press("Enter")
+  root.release()
+  await expect(active).toHaveText("/tmp/")
+  await view.editor.press("Enter")
+  await expect(view.editor.locator('[data-mention="file"]')).toHaveText(["@~/dev/app.ts", "@/tmp/"])
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(1)
+  expect(prompts[0]).toMatchObject({ files: [{ uri: "file:///Users/tester/dev/app.ts" }, { uri: "file:///tmp/" }] })
+
+  // At the start of the prompt, a slash stays a command until a second one shows a path no command has.
+  await view.editor.pressSequentially("/Users/tester/no")
+  await expect(active).toHaveText("~/notes.md")
+  await view.editor.press("Enter")
+  await expect(view.editor.locator('[data-mention="file"]')).toHaveText("@~/notes.md")
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(2)
+  expect(prompts[1]).toMatchObject({ files: [{ uri: "file:///Users/tester/notes.md" }] })
+
+  // Enter sends a slash word that matches no command, and still runs one that does.
+  await view.editor.pressSequentially("/Users")
+  await expect(suggestions).toContainText("No matching items")
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(3)
+  expect(prompts[2]?.text).toBe("/Users")
+
+  await view.editor.pressSequentially("/rev")
+  await expect(active).toHaveText("/review")
+  await view.editor.press("Enter")
+  await expect(view.editor).toHaveText("/review")
+  await view.editor.press("Enter")
+  await expect.poll(() => commands).toEqual([expect.objectContaining({ name: "review" })])
+
+  // A folder listed by an earlier list is read again, and completing it mid-prompt leaves the caret after it.
+  listings.set("/Users/tester/dev", [
+    { path: "/Users/tester/dev/app.ts", type: "file" },
+    { path: "/Users/tester/dev/new.ts", type: "file" },
+  ])
+  await view.editor.pressSequentially("see  now")
+
+  for (const key of ["ArrowLeft", "ArrowLeft", "ArrowLeft", "ArrowLeft"]) await view.editor.press(key)
+
+  await view.editor.pressSequentially("~/")
+  await expect(active).toHaveText("~/dev/")
+  await view.editor.press("Tab")
+  await expect(active).toHaveText("~/dev/app.ts")
+  await expect(rows).toHaveText(["~/dev/app.ts", "~/dev/new.ts"])
+  await view.editor.pressSequentially("a")
+  await expect(view.editor).toHaveText("see ~/dev/a now")
+})
+
 test("closing the @ menu aborts its session search", async ({ page }) => {
   const view = await openSession(page, {
     name: "SessionMentionAbort",

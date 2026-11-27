@@ -14,6 +14,15 @@ const command: ComposerSuggestion = { id: "review", kind: "command", label: "/re
 
 const file: ComposerSuggestion = { id: "src/index.ts", kind: "file", label: "index.ts", path: "src/index.ts" }
 
+const homeFile: ComposerSuggestion = {
+  id: "file:/home/u/dev/a.ts",
+  kind: "file",
+  label: "~/dev/a.ts",
+  path: "/home/u/dev/a.ts",
+}
+
+const homeFolder: ComposerSuggestion = { id: "file:/home/u/dev/", kind: "file", label: "~/dev/", path: "/home/u/dev/" }
+
 function persisted(value = "", cursor = value.length): ComposerPersistedState {
   return {
     prompt: [{ type: "text", content: value, start: 0, end: value.length }],
@@ -22,7 +31,10 @@ function persisted(value = "", cursor = value.length): ComposerPersistedState {
   }
 }
 
-function key(key: string, input: { ctrl?: boolean; ids?: string[]; empty?: boolean } = {}): ComposerInteractionEvent {
+function key(
+  key: string,
+  input: { ctrl?: boolean; ids?: string[]; empty?: boolean; loading?: boolean } = {},
+): ComposerInteractionEvent {
   return {
     type: "key.down",
     key,
@@ -30,6 +42,7 @@ function key(key: string, input: { ctrl?: boolean; ids?: string[]; empty?: boole
     composing: false,
     ids: input.ids ?? [],
     empty: input.empty,
+    loading: input.loading,
   }
 }
 
@@ -104,7 +117,7 @@ test.each<{
     event: { type: "context.open" },
     draft: persisted("see @"),
     popover: { type: "closed" },
-    command: { type: "draft.removeTextBefore", value: "@" },
+    command: { type: "draft.replaceTextBefore", value: "@", replacement: "" },
   },
   {
     name: "closes context on a second press and keeps a typed query",
@@ -117,6 +130,7 @@ test.each<{
   {
     name: "opens inline commands when slash is the entire prompt",
     event: { type: "input.changed", value: "/re" },
+    draft: persisted("/re"),
     popover: { type: "command-inline", query: "re" },
   },
   {
@@ -126,8 +140,66 @@ test.each<{
   },
   {
     name: "opens nested slash command names",
-    event: { type: "input.changed", value: "/review/" },
+    event: { type: "input.changed", value: "/review/", commands: [{ ...command, label: "/review/nested" }] },
+    draft: persisted("/review/"),
     popover: { type: "command-inline", query: "review/" },
+  },
+  {
+    name: "completes a path at the start of the prompt once no command has its folder",
+    event: { type: "input.changed", value: "/Users/me", commands: [{ ...command, label: "/review/nested" }] },
+    draft: persisted("/Users/me"),
+    popover: { type: "context", query: "/Users/me", bare: true },
+  },
+  {
+    name: "completes an absolute path after a space",
+    event: { type: "input.changed", value: "explain /etc now", persist: false },
+    draft: persisted("explain /etc now", 12),
+    popover: { type: "context", query: "/etc", bare: true },
+  },
+  {
+    name: "completes a path typed after an earlier mention",
+    from: { popover: { type: "context", query: "/tmp/", bare: true } },
+    event: { type: "input.changed", value: "ask @alice about /tmp/x", persist: false },
+    draft: persisted("ask @alice about /tmp/x"),
+    popover: { type: "context", query: "/tmp/x", bare: true },
+  },
+  {
+    name: "replaces a path typed without @ with the file chosen for it",
+    from: { popover: { type: "context", query: "~/dev/a", bare: true } },
+    event: { type: "popover.select", item: homeFile },
+    draft: persisted("see ~/dev/a now", 11),
+    command: { type: "mention.add", item: homeFile, range: { start: 4, end: 11 } },
+  },
+  {
+    name: "Tab asks to complete the highlighted row",
+    from: { popover: { type: "context", query: "~/de", activeID: homeFolder.id, bare: true } },
+    event: key("Tab", { ids: [homeFolder.id] }),
+    command: { type: "suggestion.select", id: homeFolder.id, complete: true },
+    handled: true,
+  },
+  {
+    name: "completing a folder of a path writes it out and lists what it holds",
+    from: { popover: { type: "context", query: "~/de", activeID: homeFolder.id, bare: true } },
+    event: { type: "popover.select", item: homeFolder, complete: true },
+    draft: persisted("~/de"),
+    popover: { type: "context", query: "~/dev/", bare: true },
+    command: { type: "draft.replaceTextBefore", value: "~/de", replacement: "~/dev/" },
+  },
+  {
+    name: "Tab chooses a file of a path",
+    from: { popover: { type: "context", query: "~/dev/a", activeID: homeFile.id, bare: true } },
+    event: { type: "popover.select", item: homeFile, complete: true },
+    draft: persisted("~/dev/a"),
+    popover: { type: "closed" },
+    command: { type: "mention.add", item: homeFile, range: { start: 0, end: 7 } },
+  },
+  {
+    name: "the context button starts a mention after a path typed without @",
+    from: { popover: { type: "context", query: "~/dev", bare: true } },
+    event: { type: "context.open" },
+    draft: persisted("~/dev "),
+    popover: { type: "context", query: "" },
+    command: { type: "draft.addText", value: "@" },
   },
   {
     name: "completes nested slash command names",
@@ -379,6 +451,44 @@ test("editing a recalled entry makes it the draft", () => {
 
   const idle = createComposerInteractionState()
   expect(transitionComposer(idle, { type: "draft.edited" }, persisted()).state).toBe(idle)
+})
+
+test("a home path typed without @ completes in a prompt and stays text in a shell command", () => {
+  const typed = (mode: "normal" | "shell") =>
+    transitionComposer(
+      createComposerInteractionState(),
+      { type: "input.changed", value: "ls ~/de", persist: false },
+      { ...persisted("ls ~/de"), mode },
+    ).state.popover
+
+  expect(typed("normal")).toEqual({ type: "context", query: "~/de", bare: true })
+  expect(typed("shell")).toEqual({ type: "closed" })
+})
+
+test("Enter sends when the list has nothing to choose and nothing on the way", () => {
+  const commands: ComposerInteractionState = {
+    ...createComposerInteractionState(),
+    popover: { type: "command-inline", query: "Users" },
+  }
+
+  expect(transitionComposer(commands, key("Enter"), persisted("/Users")).handled).toBe(false)
+  expect(transitionComposer(commands, key("Tab"), persisted("/Users")).handled).toBe(true)
+
+  // A mention waits for the rows of what was typed; a path typed without `@` never asked for them.
+  const mention: ComposerInteractionState = {
+    ...createComposerInteractionState(),
+    popover: { type: "context", query: "src" },
+  }
+
+  expect(transitionComposer(mention, key("Enter", { loading: true }), persisted("@src")).handled).toBe(true)
+  expect(transitionComposer(mention, key("Enter"), persisted("@src")).handled).toBe(false)
+
+  const path: ComposerInteractionState = {
+    ...createComposerInteractionState(),
+    popover: { type: "context", query: "~/x", bare: true },
+  }
+
+  expect(transitionComposer(path, key("Enter", { loading: true }), persisted("~/x")).handled).toBe(false)
 })
 
 test("typing with nothing open keeps the same state and asks for nothing", () => {
