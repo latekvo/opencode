@@ -585,6 +585,13 @@ export function createComposerEditor(input: {
     if (contextList.grouped.state === "ready" && contextList.flat().length === 0) dispatch({ type: "popover.close" })
   })
 
+  // A path typed without `@` asked for no list, so it closes once its search finds nothing.
+  createEffect(() => {
+    if (state.popover.type !== "context" || !state.popover.bare || contextLoading()) return
+
+    if (contextList.grouped.state === "ready" && contextList.flat().length === 0) dispatch({ type: "popover.close" })
+  })
+
   const restoreFocus = (cursor = draft.state.cursor ?? promptLength(draft.state.prompt)) => {
     cancelFocus()
     focusRequest = { cursor }
