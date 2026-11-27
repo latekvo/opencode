@@ -313,6 +313,9 @@ export class PatchmarkStream {
       let open = false
       for (let k = first; k <= last; k++) if (children[k]!.open) open = true
       if (open && !early) break
+      // An unclosed math opener right after this unit may reparse as its continuation, so wait for the math to close
+      const after = children[last + 1]
+      if (streaming && after?.type === "math_block" && after.open && after.startLine === children[last]!.endLine + 1) break
       if (!this.options.settleOnComplete && streaming) {
         let hasVisibleAfter = false
         for (let m = last + 1; m < children.length; m++) {

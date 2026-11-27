@@ -1277,7 +1277,7 @@ story("preserves streamed math through completion and a fresh render", async ({ 
   await expect(markdown.locator(".katex")).toHaveCount(1)
   await expect(markdown.locator(".katex-mathml")).toContainText("P(x_{t+1})")
   expect(await markdown.locator(".katex").evaluate((element) => element.nextSibling?.textContent ?? "")).toBe("")
-  await harness.getByLabel("Markdown text").fill("Formula: \\(P(x_{t+1})\\) and \\(w^{*}\\).\n\n$$\nx^2 + y^2\n$$\n")
+  await harness.getByLabel("Markdown text").fill("Formula: \\(P(x_{t+1})\\) and \\(w^{*}\\).\n$$\nx^2 + y^2\n$$\n")
   await expect(markdown.locator(".katex")).toHaveCount(3)
   await expect(markdown.locator(".katex-display")).toHaveCount(1)
   await expect(markdown.locator(".katex-mathml")).toContainText(["P(x_{t+1})", "w^{*}", "x^2 + y^2"])

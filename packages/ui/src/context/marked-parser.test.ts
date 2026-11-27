@@ -31,6 +31,14 @@ test("renders inline and block math", async () => {
   expect(await parser.parse("$$\nx^2\n$$\n")).toContain('<span class="katex-display">')
 })
 
+test("a `$$` block interrupts a paragraph, a lone `$` line or an unclosed `$$` does not", async () => {
+  const html = await parser.parse("Block:\n$$\nx^2\n$$\nAfter")
+  expect(html).toStartWith('<p>Block:</p>\n<span class="katex-display">')
+  expect(html).toEndWith("<p>After</p>\n")
+  expect(await parser.parse("Shell:\n$\nls\n$\n")).toBe("<p>Shell:\n$\nls\n$</p>\n")
+  expect(await parser.parse("Price:\n$$\nnever closed")).toBe("<p>Price:\n$$\nnever closed</p>\n")
+})
+
 test.each([
   "Energy is $E = mc^2$.",
   "因此 $x^2$ 是正数",
@@ -89,6 +97,13 @@ test("lexes dollar-heavy paragraphs in near-linear time", () => {
   const units = ["`a` $5 ", "$a ", "\\$$a", "$a\\\\\\ ", "It costs $5, ", "with `c` $x_1$ and "]
   const startedAt = performance.now()
   units.forEach((unit) => parser.lexer(unit.repeat(Math.ceil(10_000 / unit.length))))
+  expect(performance.now() - startedAt).toBeLessThan(500)
+})
+
+// marked asks the math block for its start with the rest of the document once per paragraph.
+test("lexes paragraph-heavy documents in near-linear time", () => {
+  const startedAt = performance.now()
+  parser.lexer("a\n\n".repeat(100_000))
   expect(performance.now() - startedAt).toBeLessThan(500)
 })
 
