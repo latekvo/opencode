@@ -949,17 +949,43 @@ test("keeps a 25000-line crash report editable in a new session", async ({ page 
   await expectCaretVisible(input)
 })
 
+test("a long prompt grows the composer upward to half the viewport, then scrolls", async ({ page }) => {
+  const { editor } = await openSession(page, { name: "ComposerGrowth" })
+  const composer = page.locator('[data-component="composer"]')
+  const scroll = page.locator('[data-component="composer-scroll"]')
+  const rest = (await composer.boundingBox())!
+
+  await editor.fill(Array.from({ length: 40 }, (_, index) => `Line ${index + 1}`).join("\n"))
+  await expect.poll(() => editor.innerText()).toMatch(/\nLine 40$/)
+
+  const half = await page.evaluate(() => window.innerHeight / 2)
+  await expect.poll(() => scroll.evaluate((element) => element.getBoundingClientRect().height)).toBe(half)
+  await expect.poll(() => scroll.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+  const grown = (await composer.boundingBox())!
+  expect(grown.y).toBeLessThan(rest.y)
+  expect(grown.y + grown.height).toBe(rest.y + rest.height)
+})
+
 test("keeps a line added at the end of a scrolling prompt clear of the bottom fade", async ({ page }) => {
   const { editor } = await openSession(page, { name: "ComposerFade" })
   await editor.click()
 
-  for (const line of Array.from({ length: 12 }, (_, index) => `Line ${index + 1}`)) {
+  for (const line of Array.from({ length: 24 }, (_, index) => `Line ${index + 1}`)) {
     await page.keyboard.type(line)
     await page.keyboard.press("Shift+Enter")
   }
 
   await page.keyboard.type("Last line")
-  await expect.poll(() => editor.innerText()).toMatch(/Line 12\nLast line$/)
+  await expect.poll(() => editor.innerText()).toMatch(/Line 24\nLast line$/)
+  await expect
+    .poll(() =>
+      editor.evaluate((element) => {
+        const viewport = element.closest('[data-component="composer-scroll"]')!
+
+        return viewport.scrollHeight > viewport.clientHeight
+      }),
+    )
+    .toBe(true)
 
   // The mask fades the viewport's bottom --composer-fade-bottom pixels; the last line must end above them.
   await expect

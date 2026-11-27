@@ -100,8 +100,10 @@ export function NewSessionView(props: {
           active={props.composer.state.drag === "active"}
           input={props.composer.model.selection.current()?.capabilities.input}
         />
-        <div class="absolute inset-x-0 top-[25.375%] flex justify-center px-6">
-          <div class={NEW_SESSION_CONTENT_WIDTH}>
+        {/* The top spacer gives way when a tall prompt would push the block under the provider tip. */}
+        <div class="pointer-events-none absolute inset-0 flex flex-col items-center px-6">
+          <div class="min-h-0 shrink basis-[25.375%]" />
+          <div class={`${NEW_SESSION_CONTENT_WIDTH} pointer-events-auto shrink-0`}>
             <NewSessionWordmark
               ref={setLogo}
               state={wordmark}
@@ -132,6 +134,7 @@ export function NewSessionView(props: {
               </Show>
             </div>
           </div>
+          <div class="h-12 shrink-0" />
         </div>
         <Show when={selectPinBoard(wordmark(), logo())}>
           {(board) => (
