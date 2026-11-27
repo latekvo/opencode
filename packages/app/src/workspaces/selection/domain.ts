@@ -439,8 +439,10 @@ export function createDirectorySearch(args: {
   location: () => { directory: string; workspace?: string } | undefined
   base: () => string | undefined
   home: () => string
+  /** Lists files too, ending each folder in `/`, and leaves out home itself for a `~` path. */
+  files?: boolean
 }) {
-  type Item = { name: string; absolute: string }
+  type Item = { name: string; absolute: string; type: "file" | "directory" }
 
   // Reads end with the dialog, not with one search, since later searches reuse what they cached.
   const lifetime = new AbortController()
@@ -460,7 +462,7 @@ export function createDirectorySearch(args: {
               type: "lookup.succeeded",
               key,
               attempt,
-              items: nodes.filter((node) => node.type === "directory"),
+              items: args.files ? nodes : nodes.filter((node) => node.type === "directory"),
             }),
           () => dispatch({ type: "lookup.failed", key, attempt }),
         )
@@ -519,13 +521,16 @@ export function createDirectorySearch(args: {
     return answer.promise
   }
 
-  const match = async (directory: string, query: string, limit: number) => {
-    const items = await directories(directory)
+  const match = async (directory: string, query: string, limit: number, kind?: "directory") => {
+    const items = (await directories(directory)).filter((item) => !kind || item.type === kind)
 
-    if (!query) return items.slice(0, limit).map((item) => item.absolute)
+    if (!query) return items.slice(0, limit)
 
-    return fuzzysort.go(query, items, { key: "name", limit }).map((item) => item.obj.absolute)
+    return fuzzysort.go(query, items, { key: "name", limit }).map((item) => item.obj)
   }
+
+  const listed = (item: Omit<Item, "name">) =>
+    args.files && item.type === "directory" ? `${item.absolute}/` : item.absolute
 
   const search = async (filter: string, options?: { signal?: AbortSignal }): Promise<string[]> => {
     const active = () => !options?.signal?.aborted
@@ -546,13 +551,22 @@ export function createDirectorySearch(args: {
           ? []
           : await args.sdk.api.file
               .find(
-                { location, query: joinPickerPath(relative, query), type: "directory", limit: 50 },
+                {
+                  location,
+                  query: joinPickerPath(relative, query),
+                  type: args.files ? undefined : "directory",
+                  limit: 50,
+                },
                 { signal: options?.signal },
               )
               .then((result) =>
                 result.data
-                  .map((entry) => pickerAbsolutePath(entry.path, result.location.directory))
-                  .filter((path) => treePathWithin(input.directory, path)),
+                  .map((entry) => ({
+                    absolute: pickerAbsolutePath(entry.path, result.location.directory),
+                    type: entry.type,
+                  }))
+                  .filter((item) => treePathWithin(input.directory, item.absolute))
+                  .map(listed),
               )
               .catch(() => [])
 
@@ -562,13 +576,11 @@ export function createDirectorySearch(args: {
         return results.slice(0, 50)
       }
 
-      const fallback = query
-        ? await match(input.directory, query, 50)
-        : (await directories(input.directory)).map((item) => item.absolute)
+      const fallback = query ? await match(input.directory, query, 50) : await directories(input.directory)
 
       if (!active()) return []
 
-      return fallback
+      return fallback.map(listed)
     }
 
     const segments = query.replace(/^\/+/, "").split("/")
@@ -584,25 +596,30 @@ export function createDirectorySearch(args: {
         continue
       }
 
-      paths = Array.from(new Set((await Promise.all(paths.map((path) => match(path, part, 4)))).flat())).slice(0, 12)
+      const folders = await Promise.all(paths.map((directory) => match(directory, part, 4, "directory")))
+      paths = Array.from(new Set(folders.flat().map((item) => item.absolute))).slice(0, 12)
 
       if (!active() || paths.length === 0) return []
     }
 
-    const matches = Array.from(new Set((await Promise.all(paths.map((path) => match(path, tail, 50)))).flat()))
+    const matches = (await Promise.all(paths.map((directory) => match(directory, tail, 50)))).flat()
 
     if (!active()) return []
-    const base = raw.startsWith("~") ? trimPickerPath(input.directory) : ""
+    const base = raw.startsWith("~") && !args.files ? trimPickerPath(input.directory) : ""
 
-    if (raw.endsWith("/") || !tail) return Array.from(new Set([base, ...matches].filter(Boolean))).slice(0, 50)
-    const target = matches.find((path) => getFilename(path).toLowerCase() === tail.toLowerCase())
+    if (raw.endsWith("/") || !tail)
+      return Array.from(new Set([base, ...matches.map(listed)].filter(Boolean))).slice(0, 50)
 
-    if (!target) return matches.slice(0, 50)
-    const children = await match(target, "", 30)
+    const target = matches.find(
+      (item) => item.type === "directory" && getFilename(item.absolute).toLowerCase() === tail.toLowerCase(),
+    )
+
+    if (!target) return Array.from(new Set(matches.map(listed))).slice(0, 50)
+    const children = await match(target.absolute, "", 30)
 
     if (!active()) return []
 
-    return Array.from(new Set([base, ...matches, ...children].filter(Boolean))).slice(0, 50)
+    return Array.from(new Set([base, ...[...matches, ...children].map(listed)].filter(Boolean))).slice(0, 50)
   }
 
   return Object.assign(search, { dispose: () => dispatch({ type: "disposed" }) })

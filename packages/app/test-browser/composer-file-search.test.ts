@@ -88,6 +88,46 @@ test("closing @ aborts its session search, and reopening on the same word waits 
   }
 })
 
+test("a path lists only its files and folders, and searches no sessions", async () => {
+  const words: string[] = []
+
+  const value = setup(
+    { "~/d": ["/home/u/dev/"] },
+    {
+      searchSessions: () => [{ id: "session:ses_notes", kind: "session", label: "~/dev notes" }],
+      requestSessionSearch: (word) => {
+        words.push(word)
+
+        return Promise.resolve()
+      },
+    },
+  )
+
+  try {
+    await value.type("@~/d")
+    expect(value.editor.suggestions().map((item) => item.id)).toEqual(["file:/home/u/dev/"])
+    expect(words).toEqual([])
+  } finally {
+    value.dispose()
+  }
+})
+
+test("a path typed without @ closes its list once its search finds nothing, so keys such as Escape reach the app", async () => {
+  const value = setup({ "/tmp/n": [], "~/d": ["/home/u/dev/"] })
+
+  try {
+    await value.type("see /tmp/n", { search: false })
+    expect(value.editor.state.popover).toMatchObject({ type: "context", bare: true })
+    await value.search()
+    expect(value.editor.state.popover.type).toBe("closed")
+    await value.type("see ~/d")
+    expect(value.editor.state.popover).toMatchObject({ type: "context", bare: true })
+    expect(value.editor.suggestions().map((item) => item.id)).toEqual(["file:/home/u/dev/"])
+  } finally {
+    value.dispose()
+  }
+})
+
 test("moving the @ highlight reuses the current query results", async () => {
   const searches: string[] = []
 

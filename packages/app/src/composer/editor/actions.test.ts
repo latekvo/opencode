@@ -68,7 +68,7 @@ describe("Composer store", () => {
     expect(prompt.state.cursor).toBe(5)
   })
 
-  test("removes text before the cursor without touching mentions or later text", () => {
+  test("replaces text before the cursor without touching mentions or later text", () => {
     const [state, setState] = createStore<ComposerPersistedState>({
       prompt: [
         { type: "text", content: "A ", start: 0, end: 2 },
@@ -81,10 +81,10 @@ describe("Composer store", () => {
 
     const prompt = createComposerEditorActions([state, setState])
 
-    prompt.removeTextBefore("/")
+    prompt.replaceTextBefore("/", "")
     expect(prompt.state.cursor).toBe(8)
 
-    prompt.removeTextBefore("@")
+    prompt.replaceTextBefore("@", "")
 
     expect(prompt.state.prompt).toEqual([
       { type: "text", content: "A ", start: 0, end: 2 },
@@ -92,6 +92,11 @@ describe("Composer store", () => {
       { type: "text", content: "  B", start: 6, end: 9 },
     ])
     expect(prompt.state.cursor).toBe(7)
+
+    prompt.replaceTextBefore(" ", "~/dev/")
+
+    expect(prompt.state.prompt.at(-1)).toEqual({ type: "text", content: "~/dev/ B", start: 6, end: 14 })
+    expect(prompt.state.cursor).toBe(12)
   })
 
   test("mutates mentions, attachments, and context through editor actions", () => {

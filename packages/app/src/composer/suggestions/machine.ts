@@ -1,5 +1,5 @@
 import type { ComposerHistoryEntry, ComposerPersistedState, ComposerSuggestion } from "../types"
-import { isAttachment } from "../prompt-parts"
+import { isAttachment, promptLength } from "../prompt-parts"
 
 export type ComposerMode = "normal" | "shell"
 
@@ -13,7 +13,14 @@ export type ComposerPopoverState =
   | { readonly type: "closed" }
   // Plain arrows recall history entries into the draft, with no list open.
   | { readonly type: "browsing"; readonly index: number; readonly saved: ComposerSavedDraft }
-  | { readonly type: "context"; readonly query: string; readonly activeID?: string; readonly chosen?: boolean }
+  | {
+      readonly type: "context"
+      readonly query: string
+      readonly activeID?: string
+      readonly chosen?: boolean
+      /** A path typed without `@`; the file or folder chosen replaces it. */
+      readonly bare?: true
+    }
   | { readonly type: "command-inline"; readonly query: string; readonly activeID?: string; readonly chosen?: boolean }
   | { readonly type: "command-menu"; readonly query: string; readonly activeID?: string; readonly chosen?: boolean }
   | {
@@ -37,7 +44,13 @@ export type ComposerInteractionState = {
 }
 
 export type ComposerInteractionEvent =
-  | { readonly type: "input.changed"; readonly value: string; readonly persist?: boolean }
+  | {
+      readonly type: "input.changed"
+      readonly value: string
+      readonly persist?: boolean
+      /** Slash command names can contain `/`, so a prompt that starts with one of their folders stays a command. */
+      readonly commands?: readonly ComposerSuggestion[]
+    }
   /** The draft changed outside typing (an attachment or a comment); recalled history becomes the draft. */
   | { readonly type: "draft.edited" }
   | { readonly type: "commands.open" }
@@ -60,7 +73,8 @@ export type ComposerInteractionEvent =
   | { readonly type: "popover.close" }
   /** A pointer or focus outside the list; a history preview puts the draft back. */
   | { readonly type: "popover.dismiss" }
-  | { readonly type: "popover.select"; readonly item: ComposerSuggestion }
+  /** `complete` (Tab) opens a folder of a typed path in place instead of choosing it. */
+  | { readonly type: "popover.select"; readonly item: ComposerSuggestion; readonly complete?: boolean }
   | {
       readonly type: "key.down"
       readonly key: string
@@ -68,6 +82,8 @@ export type ComposerInteractionEvent =
       readonly composing: boolean
       readonly ids: readonly string[]
       readonly empty?: boolean
+      /** The rows for the current query are still loading, so Enter waits for them instead of sending. */
+      readonly loading?: boolean
     }
   | { readonly type: "mode.shell" }
   | { readonly type: "mode.normal" }
@@ -83,10 +99,10 @@ export type ComposerInteractionCommand =
   | { readonly type: "draft.setMode"; readonly mode: ComposerMode }
   | { readonly type: "draft.setText"; readonly value: string }
   | { readonly type: "draft.addText"; readonly value: string }
-  | { readonly type: "draft.removeTextBefore"; readonly value: string }
+  | { readonly type: "draft.replaceTextBefore"; readonly value: string; readonly replacement: string }
   | { readonly type: "mention.add"; readonly item: ComposerSuggestion; readonly range?: { start: number; end: number } }
   | { readonly type: "popover.filter"; readonly popover: "command" | "context"; readonly query: string }
-  | { readonly type: "suggestion.select"; readonly id: string }
+  | { readonly type: "suggestion.select"; readonly id: string; readonly complete: boolean }
   | { readonly type: "focus.editor" }
   | { readonly type: "focus.command-search" }
   | { readonly type: "history.preview"; readonly id: string }
@@ -102,6 +118,8 @@ export type ComposerEditorTransition = {
 const CLOSED: ComposerPopoverState = Object.freeze({ type: "closed" })
 
 const NO_COMMANDS: readonly ComposerInteractionCommand[] = Object.freeze([])
+
+const NO_SUGGESTIONS: readonly ComposerSuggestion[] = Object.freeze([])
 
 const SHELL: ComposerInteractionCommand = Object.freeze({ type: "draft.setMode", mode: "shell" })
 
@@ -122,6 +140,11 @@ export function isComposerPopoverOpen(
   return state.popover.type !== "closed" && state.popover.type !== "browsing"
 }
 
+/** Whether the open list renders: a path typed without `@` shows its list only while it has rows. */
+export function isComposerPopoverShown(state: ComposerInteractionState, rows: number) {
+  return isComposerPopoverOpen(state) && !(state.popover.type === "context" && state.popover.bare && rows === 0)
+}
+
 export function composerPopoverActiveID(state: ComposerInteractionState) {
   return isComposerPopoverOpen(state) ? state.popover.activeID : undefined
 }
@@ -130,12 +153,18 @@ export function composerHistoryPreviewHeight(state: ComposerInteractionState) {
   return state.popover.type === "history" ? state.popover.height : undefined
 }
 
+/** Whether a context query is a path from home (`~`) or a root. */
+export function isComposerPathQuery(query: string) {
+  return /^(?:~(?:[\\/]|$)|\/|[A-Za-z]:[\\/])/.test(query)
+}
+
 export function transitionComposer(
   state: ComposerInteractionState,
   event: ComposerInteractionEvent,
   persisted: ComposerPersistedState,
 ): ComposerEditorTransition {
-  if (event.type === "input.changed") return inputChanged(state, event.value, event.persist !== false, persisted)
+  if (event.type === "input.changed")
+    return inputChanged(state, event.value, event.persist !== false, persisted, event.commands ?? NO_SUGGESTIONS)
 
   if (event.type === "draft.edited")
     return state.popover.type === "browsing" ? changed({ ...state, popover: CLOSED }) : unchanged(state)
@@ -168,7 +197,7 @@ export function transitionComposer(
 
   if (event.type === "popover.active") return activeChanged(state, event.id)
 
-  if (event.type === "popover.select") return suggestionSelected(state, event.item, persisted)
+  if (event.type === "popover.select") return suggestionSelected(state, event.item, persisted, !!event.complete)
 
   if (event.type === "key.down") return keyDown(state, event, selectComposerMode(persisted))
 
@@ -206,6 +235,7 @@ function inputChanged(
   value: string,
   persist: boolean,
   persisted: ComposerPersistedState,
+  slashCommands: readonly ComposerSuggestion[],
 ): ComposerEditorTransition {
   if (selectComposerMode(persisted) === "normal" && value === "!") {
     return changed({ ...state, popover: CLOSED, focus: "editor" }, [SHELL, { type: "draft.setText", value: "" }])
@@ -215,16 +245,33 @@ function inputChanged(
   const context = value.includes("@")
     ? value
         .slice(0, persisted.cursor ?? value.length)
-        .match(state.popover.type === "context" ? /(?:^|\s)@((?:[^\s@]+(?: [^\s@]+)* ?)?)$/ : /(?:^|\s)@([^\s@]*)$/)
+        .match(
+          state.popover.type === "context" && !state.popover.bare
+            ? /(?:^|\s)@((?:[^\s@]+(?: [^\s@]+)* ?)?)$/
+            : /(?:^|\s)@([^\s@]*)$/,
+        )
     : null
 
-  if (context) {
-    const query = context[1] ?? ""
+  // A shell command's paths stay text, so Enter still runs it.
+  const path =
+    !context && selectComposerMode(persisted) === "normal" && (value.includes("/") || value.includes("~"))
+      ? typedPath(value.slice(0, persisted.cursor ?? value.length), slashCommands)
+      : undefined
 
-    return changed({ ...state, popover: { type: "context", query }, focus: "editor" }, [
-      ...(persist ? [{ type: "draft.setText" as const, value }] : []),
-      { type: "popover.filter", popover: "context", query },
-    ])
+  if (context || path) {
+    const query = path ?? context?.[1] ?? ""
+
+    return changed(
+      {
+        ...state,
+        popover: path ? { type: "context", query, bare: true } : { type: "context", query },
+        focus: "editor",
+      },
+      [
+        ...(persist ? [{ type: "draft.setText" as const, value }] : []),
+        { type: "popover.filter", popover: "context", query },
+      ],
+    )
   }
 
   const command = value.startsWith("/") ? value.match(/^\/(\S*)$/) : null
@@ -275,9 +322,9 @@ function openCommands(state: ComposerInteractionState, persisted: ComposerPersis
 
 function openContext(state: ComposerInteractionState): ComposerEditorTransition {
   // A second press closes the context list, taking back the @ it typed when nothing follows it yet.
-  if (state.popover.type === "context") {
+  if (state.popover.type === "context" && !state.popover.bare) {
     return changed({ ...state, popover: CLOSED, focus: "editor" }, [
-      ...(state.popover.query ? [] : [{ type: "draft.removeTextBefore" as const, value: "@" }]),
+      ...(state.popover.query ? [] : [{ type: "draft.replaceTextBefore" as const, value: "@", replacement: "" }]),
       { type: "focus.editor" },
     ])
   }
@@ -399,7 +446,24 @@ function suggestionSelected(
   state: ComposerInteractionState,
   item: ComposerSuggestion,
   persisted: ComposerPersistedState,
+  complete: boolean,
 ): ComposerEditorTransition {
+  // Like a shell, Tab writes out the folder and lists what it holds.
+  if (
+    complete &&
+    state.popover.type === "context" &&
+    isComposerPathQuery(state.popover.query) &&
+    item.path?.endsWith("/")
+  ) {
+    return changed(
+      { ...state, popover: { ...state.popover, query: item.label, activeID: undefined, chosen: undefined } },
+      [
+        { type: "draft.replaceTextBefore", value: state.popover.query, replacement: item.label },
+        { type: "popover.filter", popover: "context", query: item.label },
+      ],
+    )
+  }
+
   if (item.kind === "history") {
     if (state.popover.type !== "history" || !item.history) return unchanged(state)
 
@@ -424,13 +488,17 @@ function suggestionSelected(
           : replaceTrigger(current, "/", `${item.label} `),
     })
   } else {
+    const cursor = persisted.cursor ?? promptLength(persisted.prompt)
+
     commands.push({
       type: "mention.add",
       item,
       range:
         item.kind === "skill" && item.label.startsWith("/")
           ? { start: 0, end: state.popover.type === "command-menu" ? 0 : current.length }
-          : undefined,
+          : state.popover.type === "context" && state.popover.bare
+            ? { start: cursor - state.popover.query.length, end: cursor }
+            : undefined,
     })
   }
 
@@ -476,9 +544,16 @@ function keyDown(
   }
 
   if (event.key === "Tab" || (event.key === "Enter" && !event.composing)) {
-    if (!state.popover.activeID) return unchanged(state, true)
+    // A path typed without `@` opened its list unasked, so Enter takes a row only once the user chose one.
+    const bare = state.popover.type === "context" && !!state.popover.bare
 
-    return unchanged(state, true, [{ type: "suggestion.select", id: state.popover.activeID }])
+    if (state.popover.activeID && (event.key === "Tab" || !bare || state.popover.chosen))
+      return unchanged(state, true, [
+        { type: "suggestion.select", id: state.popover.activeID, complete: event.key === "Tab" },
+      ])
+
+    // With nothing to choose, Enter sends. A bare path never waits for its list.
+    return unchanged(state, event.key === "Tab" || (!!event.loading && !bare))
   }
 
   const direction =
@@ -548,6 +623,21 @@ function populated(persisted: ComposerPersistedState) {
     persisted.context.items.length > 0 ||
     persisted.prompt.some((part) => part.type === "file" || isAttachment(part))
   )
+}
+
+// The path that ends at the caret. At the start of the prompt, `/name` stays a command until a second `/` shows it
+// is no command's folder.
+function typedPath(before: string, commands: readonly ComposerSuggestion[]) {
+  const token = before.match(/\S+$/)?.[0]
+
+  if (!token || !isComposerPathQuery(token)) return
+
+  if (token.length < before.length || !token.startsWith("/")) return token
+  const segments = token.slice(1).split("/")
+
+  if (segments.length < 2 || commands.some((item) => item.label.startsWith(`/${segments[0]}/`))) return
+
+  return token
 }
 
 function replaceTrigger(value: string, trigger: "@" | "/", replacement: string) {
