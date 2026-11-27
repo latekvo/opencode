@@ -201,6 +201,9 @@ test("completes paths from home and the root, with or without @, and sends them 
   // Rows of the previous query stay listed while the next search runs; only the current query's rows take the highlight.
   const active = suggestions.locator("[data-suggestion-id][data-active] bdi")
 
+  const chips = view.editor.locator('[data-mention="file"]')
+
+  // Tab takes the highlighted row of a path typed without @: a folder opens in place, and a file becomes a mention.
   await view.editor.pressSequentially("Read ~/")
   await expect(rows).toHaveText(["~/dev/", "~/notes.md", "~/project/"])
   await expect(active).toHaveText("~/dev/")
@@ -208,8 +211,8 @@ test("completes paths from home and the root, with or without @, and sends them 
   await expect(view.editor).toHaveText("Read ~/dev/")
   await expect(active).toHaveText("~/dev/app.ts")
   await expect(rows).toHaveCount(1)
-  await view.editor.press("Enter")
-  await expect(view.editor.locator('[data-mention="file"]')).toHaveText("@~/dev/app.ts")
+  await view.editor.press("Tab")
+  await expect(chips).toHaveText("@~/dev/app.ts")
 
   // Enter waits for the rows of a mention, so it neither sends nor picks before they arrive.
   const root = await holdRoute(page, /\/api\/fs\/list\?(.*&)?path=%2F(&|$)/)
@@ -219,26 +222,45 @@ test("completes paths from home and the root, with or without @, and sends them 
   root.release()
   await expect(active).toHaveText("/tmp/")
   await view.editor.press("Enter")
-  await expect(view.editor.locator('[data-mention="file"]')).toHaveText(["@~/dev/app.ts", "@/tmp/"])
+  await expect(chips).toHaveText(["@~/dev/app.ts", "@/tmp/"])
   await view.editor.press("Enter")
   await expect.poll(() => prompts.length).toBe(1)
   expect(prompts[0]).toMatchObject({ files: [{ uri: "file:///Users/tester/dev/app.ts" }, { uri: "file:///tmp/" }] })
 
-  // At the start of the prompt, a slash stays a command until a second one shows a path no command has.
+  // At the start of the prompt, a slash stays a command until a second one shows a path no command has. Enter takes
+  // a row of a path typed without @ once the user moved to it.
   await view.editor.pressSequentially("/Users/tester/no")
   await expect(active).toHaveText("~/notes.md")
+  await view.editor.press("ArrowDown")
   await view.editor.press("Enter")
-  await expect(view.editor.locator('[data-mention="file"]')).toHaveText("@~/notes.md")
+  await expect(chips).toHaveText("@~/notes.md")
   await view.editor.press("Enter")
   await expect.poll(() => prompts.length).toBe(2)
   expect(prompts[1]).toMatchObject({ files: [{ uri: "file:///Users/tester/notes.md" }] })
+
+  // Otherwise Enter sends the path as text, even while its row is highlighted.
+  await view.editor.pressSequentially("the notes are in /Users/tester/notes.md")
+  await expect(active).toHaveText("~/notes.md")
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(3)
+  expect(prompts[2]?.text).toBe("the notes are in /Users/tester/notes.md")
+  expect(prompts[2]?.files ?? []).toEqual([])
+
+  // A path that matches nothing shows no list.
+  const listed = page.waitForResponse(/\/api\/fs\/list\?(.*&)?path=%2Ftmp(&|$)/)
+  await view.editor.pressSequentially("check /tmp/nothing")
+  await listed
+  await expect(suggestions).toHaveCount(0)
+  await view.editor.press("Enter")
+  await expect.poll(() => prompts.length).toBe(4)
+  expect(prompts[3]?.text).toBe("check /tmp/nothing")
 
   // Enter sends a slash word that matches no command, and still runs one that does.
   await view.editor.pressSequentially("/Users")
   await expect(suggestions).toContainText("No matching items")
   await view.editor.press("Enter")
-  await expect.poll(() => prompts.length).toBe(3)
-  expect(prompts[2]?.text).toBe("/Users")
+  await expect.poll(() => prompts.length).toBe(5)
+  expect(prompts[4]?.text).toBe("/Users")
 
   await view.editor.pressSequentially("/rev")
   await expect(active).toHaveText("/review")

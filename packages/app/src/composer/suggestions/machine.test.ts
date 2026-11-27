@@ -3,6 +3,7 @@ import type { ComposerHistoryEntry, ComposerPersistedState, ComposerSuggestion }
 import {
   composerHistoryPreviewHeight,
   createComposerInteractionState,
+  isComposerPopoverShown,
   transitionComposer,
   type ComposerInteractionCommand,
   type ComposerInteractionEvent,
@@ -169,13 +170,6 @@ test.each<{
     event: { type: "popover.select", item: homeFile },
     draft: persisted("see ~/dev/a now", 11),
     command: { type: "mention.add", item: homeFile, range: { start: 4, end: 11 } },
-  },
-  {
-    name: "Tab asks to complete the highlighted row",
-    from: { popover: { type: "context", query: "~/de", activeID: homeFolder.id, bare: true } },
-    event: key("Tab", { ids: [homeFolder.id] }),
-    command: { type: "suggestion.select", id: homeFolder.id, complete: true },
-    handled: true,
   },
   {
     name: "completing a folder of a path writes it out and lists what it holds",
@@ -463,6 +457,46 @@ test("a home path typed without @ completes in a prompt and stays text in a shel
 
   expect(typed("normal")).toEqual({ type: "context", query: "~/de", bare: true })
   expect(typed("shell")).toEqual({ type: "closed" })
+})
+
+test("Enter takes a row of a path typed without @ only once the user chose it, and Tab always does", () => {
+  const ids = [homeFile.id]
+
+  const bare = (chosen?: boolean): ComposerInteractionState => ({
+    ...createComposerInteractionState(),
+    popover: { type: "context", query: "~/dev/a", activeID: homeFile.id, chosen, bare: true },
+  })
+
+  const sent = transitionComposer(bare(), key("Enter", { ids }), persisted("see ~/dev/a"))
+  expect(sent.handled).toBe(false)
+  expect(sent.commands).toEqual([])
+
+  expect(transitionComposer(bare(true), key("Enter", { ids }), persisted("see ~/dev/a")).commands).toEqual([
+    { type: "suggestion.select", id: homeFile.id, complete: false },
+  ])
+  expect(transitionComposer(bare(), key("Tab", { ids }), persisted("see ~/dev/a")).commands).toEqual([
+    { type: "suggestion.select", id: homeFile.id, complete: true },
+  ])
+
+  // A list asked for with `@` takes its highlighted row.
+  const mention: ComposerInteractionState = {
+    ...createComposerInteractionState(),
+    popover: { type: "context", query: "~/dev/a", activeID: homeFile.id },
+  }
+
+  expect(transitionComposer(mention, key("Enter", { ids }), persisted("see @~/dev/a")).commands).toEqual([
+    { type: "suggestion.select", id: homeFile.id, complete: false },
+  ])
+})
+
+test("a list for a path typed without @ renders only while it has rows", () => {
+  const open = (popover: ComposerInteractionState["popover"]) => ({ ...createComposerInteractionState(), popover })
+
+  expect(isComposerPopoverShown(open({ type: "context", query: "/api/v1", bare: true }), 0)).toBe(false)
+  expect(isComposerPopoverShown(open({ type: "context", query: "/api/", bare: true }), 2)).toBe(true)
+  expect(isComposerPopoverShown(open({ type: "context", query: "nobody" }), 0)).toBe(true)
+  expect(isComposerPopoverShown(open({ type: "command-inline", query: "zz" }), 0)).toBe(true)
+  expect(isComposerPopoverShown(createComposerInteractionState(), 3)).toBe(false)
 })
 
 test("Enter sends when the list has nothing to choose and nothing on the way", () => {

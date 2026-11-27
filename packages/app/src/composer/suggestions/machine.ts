@@ -140,6 +140,11 @@ export function isComposerPopoverOpen(
   return state.popover.type !== "closed" && state.popover.type !== "browsing"
 }
 
+/** Whether the open list renders: a path typed without `@` shows its list only while it has rows. */
+export function isComposerPopoverShown(state: ComposerInteractionState, rows: number) {
+  return isComposerPopoverOpen(state) && !(state.popover.type === "context" && state.popover.bare && rows === 0)
+}
+
 export function composerPopoverActiveID(state: ComposerInteractionState) {
   return isComposerPopoverOpen(state) ? state.popover.activeID : undefined
 }
@@ -539,15 +544,16 @@ function keyDown(
   }
 
   if (event.key === "Tab" || (event.key === "Enter" && !event.composing)) {
-    if (state.popover.activeID)
+    // A path typed without `@` opened its list unasked, so Enter takes a row only once the user chose one.
+    const bare = state.popover.type === "context" && !!state.popover.bare
+
+    if (state.popover.activeID && (event.key === "Tab" || !bare || state.popover.chosen))
       return unchanged(state, true, [
         { type: "suggestion.select", id: state.popover.activeID, complete: event.key === "Tab" },
       ])
 
-    // With nothing to choose, Enter sends. A path typed without `@` never asked for the list, so it never waits for it.
-    const waits = event.loading && !(state.popover.type === "context" && state.popover.bare)
-
-    return unchanged(state, event.key === "Tab" || !!waits)
+    // With nothing to choose, Enter sends. A bare path never waits for its list.
+    return unchanged(state, event.key === "Tab" || (!!event.loading && !bare))
   }
 
   const direction =

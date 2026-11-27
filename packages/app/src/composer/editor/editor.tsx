@@ -57,7 +57,12 @@ import {
   storeChanged,
   transitionEditorSync,
 } from "./machine"
-import { composerHistoryPreviewHeight, composerPopoverActiveID, isComposerPopoverOpen } from "../suggestions/machine"
+import {
+  composerHistoryPreviewHeight,
+  composerPopoverActiveID,
+  isComposerPopoverOpen,
+  isComposerPopoverShown,
+} from "../suggestions/machine"
 import { QuoteCommentEditor } from "./quote-comment"
 import { selectQuoteCommentView, type QuoteCommentController } from "../quote-comment-machine"
 import "../attachments/attachments.css"
@@ -236,7 +241,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
           event.currentTarget.value = ""
         }}
       />
-      <Show when={!view.draftOnly && isComposerPopoverOpen(state)}>
+      <Show when={!view.draftOnly && isComposerPopoverShown(state, props.controller.suggestions().length)}>
         <ComposerEditorPopover
           id={suggestionsID}
           emptyLabel={i18n.t("ui.promptInput.noMatchingItems")}
