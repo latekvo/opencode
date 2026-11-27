@@ -139,10 +139,10 @@ describe("patchmark streaming parser", () => {
     })
   })
 
-  test("a `$$` line interrupts a paragraph like a code fence, a lone `$` line does not", () => {
+  test("a `$$` line interrupts a paragraph, but not as a lone `$` or a lazy continuation line", () => {
     const stream = createMarkdownStream()
-    const frame = stream.update("Block:\n$$\nx^2\n$$\nShell:\n$\nls\n$\n", { streaming: false })
-    expect(frame.blocks.map((b) => b.kind.type)).toEqual(["paragraph", "math", "paragraph"])
+    const frame = stream.update("Block:\n$$\nx^2\n$$\nShell:\n$\nls\n$\n\n> Quote\n$$\ny\n$$\n", { streaming: false })
+    expect(frame.blocks.map((b) => b.kind.type)).toEqual(["paragraph", "math", "paragraph", "blockquote"])
     expect(frame.blocks[1]!.kind).toEqual({ type: "math", source: "x^2", delimiter: "double-dollar", complete: true })
   })
 

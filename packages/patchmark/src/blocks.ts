@@ -772,10 +772,10 @@ export class BlockParser {
       }
       case 9: {
         // OpenCode display math: `$$` or `$` alone on a line, closed by the same delimiter alone on a line.
-        // Only `$$` interrupts a paragraph; a lone `$` there is more likely a shell prompt.
+        // As in the renderer's math extension, only `$$` interrupts a paragraph, and never as a lazy continuation line.
         if (!this.options.math || this.indent !== 0) return 0
         const rest = this.currentLine.slice(this.nextNonspace)
-        if (rest === "$" && (this.tip.type === "paragraph" || container.type === "paragraph")) return 0
+        if (this.tip.type === "paragraph" && (rest === "$" || container.type !== "paragraph")) return 0
         if ((rest === "$$" || rest === "$") && !this.disallowMath.has(this.lineNumber)) {
           this.closeUnmatchedBlocks()
           const b = this.addChild("math_block", this.nextNonspace)
