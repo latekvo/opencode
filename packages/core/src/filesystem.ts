@@ -237,11 +237,23 @@ const baseLayer = Layer.effect(
         // Navigation can leave the cwd without activating another Location.
         const directory = envPath.resolve(location.directory, input.path ?? ".")
         const items = yield* mapMissing(environment.files.list(directory), RelativePath.make(input.path ?? "."))
-        return items
+        const typed = yield* Effect.forEach(
+          items,
+          (item) => {
+            const absolute = envPath.join(directory, item.name)
+            if (item.type !== "symlink") return Effect.succeed({ absolute, type: item.type })
+            // A symlink lists as the kind of its target; a dangling or unreadable one is skipped.
+            return Environment.typeFollowing(environment.files, absolute).pipe(
+              Effect.orElseSucceed(() => "other" as const),
+              Effect.map((type) => ({ absolute, type })),
+            )
+          },
+          { concurrency: 8 },
+        )
+        return typed
           .flatMap((item) => {
             if (item.type !== "file" && item.type !== "directory") return []
-            const absolute = envPath.join(directory, item.name)
-            const relative = envPath.relative(location.directory, absolute) || "."
+            const relative = envPath.relative(location.directory, item.absolute) || "."
             return [
               Entry.make({
                 path: RelativePath.make(relative + (item.type === "directory" ? envPath.sep : "")),

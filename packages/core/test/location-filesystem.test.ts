@@ -66,6 +66,29 @@ describe("FileSystem", () => {
     ),
   )
 
+  // Creating file symlinks on Windows requires SeCreateSymbolicLinkPrivilege.
+  describe.skipIf(process.platform === "win32")("symlinks", () => {
+    it.live("lists symlinks by their target type and skips dangling ones", () =>
+      withTmp((directory) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => fs.writeFile(path.join(directory, "file.txt"), "file"))
+          yield* Effect.promise(() => fs.mkdir(path.join(directory, "folder")))
+          yield* Effect.promise(() => fs.symlink("file.txt", path.join(directory, "linked-file")))
+          yield* Effect.promise(() => fs.symlink("folder", path.join(directory, "linked-folder")))
+          yield* Effect.promise(() => fs.symlink("missing", path.join(directory, "dangling")))
+          const filesystem = yield* FileSystem.Service
+          const entries = yield* filesystem.list()
+          expect(entries.map((entry) => ({ path: entry.path, type: entry.type }))).toEqual([
+            { path: RelativePath.make("folder" + path.sep), type: "directory" },
+            { path: RelativePath.make("linked-folder" + path.sep), type: "directory" },
+            { path: RelativePath.make("file.txt"), type: "file" },
+            { path: RelativePath.make("linked-file"), type: "file" },
+          ])
+        }).pipe(provide(directory)),
+      ),
+    )
+  })
+
   it.live("skips host canonicalization for workspace locations at boot", () =>
     withTmp((directory) =>
       Effect.gen(function* () {
@@ -319,6 +342,7 @@ describe("FileSystem", () => {
             { path: RelativePath.make("notes/"), type: "directory" },
             { path: RelativePath.make("src/"), type: "directory" },
             { path: RelativePath.make("big.bin"), type: "file" },
+            { path: RelativePath.make("link.txt"), type: "file" },
           ])
           const parentEntries = yield* service.list({ path: ".." })
           expect(parentEntries.map((entry) => ({ path: entry.path, type: entry.type }))).toEqual([
