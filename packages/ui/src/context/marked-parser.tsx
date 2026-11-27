@@ -133,6 +133,16 @@ function mathExtension(render: (token: Tokens.Generic) => string): MarkedExtensi
       {
         name: "blockKatex",
         level: "block",
+        // A `$$` line interrupts a paragraph, as in patchmark; marked merges the paragraph back if the tokenizer
+        // then fails. `src` is the rest of the document, so search only to the paragraph's end.
+        start(src) {
+          const end = src.indexOf("\n\n")
+          const index = (end === -1 ? src : src.slice(0, end)).indexOf("\n$$\n")
+
+          if (index === -1) return
+
+          return index + 1
+        },
         tokenizer(src) {
           const match = src.match(blockMathRegex)
 
