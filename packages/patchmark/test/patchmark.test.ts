@@ -139,6 +139,25 @@ describe("patchmark streaming parser", () => {
     })
   })
 
+  test("a `$$` line interrupts a paragraph like a code fence, a lone `$` line does not", () => {
+    const stream = createMarkdownStream()
+    const frame = stream.update("Block:\n$$\nx^2\n$$\nShell:\n$\nls\n$\n", { streaming: false })
+    expect(frame.blocks.map((b) => b.kind.type)).toEqual(["paragraph", "math", "paragraph"])
+    expect(frame.blocks[1]!.kind).toEqual({ type: "math", source: "x^2", delimiter: "double-dollar", complete: true })
+  })
+
+  test.each([
+    [["Block:\n", "$$\n", "x^2\n", "more prose"], ["<p>Block:\n$$\nx^2\nmore prose</p>\n"]],
+    [
+      ["| a |\n|---|\n| 1 |\n", "$\n", "x\n"],
+      ["<table>\n<thead>\n<tr>\n<th>a</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n</tr>\n<tr>\n<td>$</td>\n</tr>\n<tr>\n<td>x</td>\n</tr>\n</tbody>\n</table>\n"],
+    ],
+  ])("a streamed math opener that never closes rejoins the block it interrupted: %j", (chunks, html) => {
+    const stream = createMarkdownStream({ renderHtml: true })
+    for (const chunk of chunks) stream.append(chunk)
+    expect(stream.finalize().blocks.map((b) => b.html)).toEqual(html)
+  })
+
   test("streams GFM pipe tables row-by-row once the separator line arrives", () => {
     const stream = createMarkdownStream()
     const f1 = stream.append("| Col A | Col B |\n")
